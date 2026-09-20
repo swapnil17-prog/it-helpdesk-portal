@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+  /* Accent — used for selection / "current" states (selected card, active nav, focus ring) */
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+  /* Ink — used for primary buttons and the sidebar */
+  --color-ink-900: #111827;
+  --color-ink-800: #1f2937;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: #f7f7f9;
+  color: #111827;
+}
+
+::selection {
+  background-color: var(--color-brand-100);
+}
+
+/* Registered as Tailwind components so utility classes (e.g. "input pl-9") can still
+   override these properties — unlayered CSS would otherwise always win the cascade
+   regardless of class order, silently breaking icon-padded inputs. */
+@layer components {
+  .card {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.85rem;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border-radius: 0.6rem;
+    padding: 0.55rem 1rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background-color: var(--color-ink-900);
+    color: white;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: black;
+  }
+
+  .btn-secondary {
+    background-color: white;
+    color: #1f2937;
+    border: 1px solid #d1d5db;
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background-color: #f9fafb;
+  }
+
+  .btn-danger {
+    background-color: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+  }
+  .btn-danger:hover:not(:disabled) {
+    background-color: #fee2e2;
+  }
+
+  .input {
+    width: 100%;
+    border: 1px solid #d1d5db;
+    border-radius: 0.6rem;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.9rem;
+    background: white;
+  }
+  .input:focus {
+    outline: none;
+    border-color: var(--color-brand-500);
+    box-shadow: 0 0 0 3px var(--color-brand-100);
+  }
+
+  label.field-label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #4b5563;
+    margin-bottom: 0.3rem;
+  }
+
+  .pill-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border: 1px solid #e5e7eb;
+    color: #374151;
+    background: white;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+  }
+  .pill-tab:hover {
+    background: #f9fafb;
+  }
+  .pill-tab.active {
+    background: var(--color-ink-900);
+    border-color: var(--color-ink-900);
+    color: white;
+  }
+}
