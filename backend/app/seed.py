@@ -1,10 +1,11 @@
+import os
 from datetime import datetime, timedelta
 
 from app.auth import hash_password
 from app.database import Base, SessionLocal, engine
 from app.models import Category, Priority, Ticket, TicketComment, TicketHistory, User
 
-DEMO_PASSWORD = "password123"
+DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "password123")
 
 
 def seed():
@@ -14,6 +15,8 @@ def seed():
         if db.query(User).count() > 0:
             print("Database already seeded, skipping.")
             return
+
+        password_hash = hash_password(DEMO_PASSWORD)
 
         categories = [
             "Hardware",
@@ -55,16 +58,19 @@ def seed():
                     email=email,
                     department=department,
                     role=role,
-                    password_hash=hash_password(DEMO_PASSWORD),
+                    password_hash=password_hash,
                 )
             )
 
-        db.commit()
+        db.flush()
 
         _seed_sample_tickets(db)
 
         db.commit()
-        print("Seed complete. Demo password for all users:", DEMO_PASSWORD)
+        print("Seed complete.")
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

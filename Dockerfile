@@ -17,6 +17,9 @@ COPY backend/ .
 COPY --from=frontend-build /frontend/dist ./static
 
 ENV PORT=8000
+# Otherwise Python buffers stdout in a non-TTY container, so startup logs (e.g. seed
+# confirmation) silently sit in a buffer instead of reaching `docker logs`/Render logs.
+ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 
 CMD ["bash", "start.sh"]

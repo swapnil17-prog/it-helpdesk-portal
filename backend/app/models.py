@@ -55,12 +55,12 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(String, unique=True, index=True, nullable=False)
     name = Column(String, nullable=False)
-    email = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=False)
     department = Column(String, nullable=False)
     role = Column(String, nullable=False, default=Role.EMPLOYEE.value)
     password_hash = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     tickets_raised = relationship(
         "Ticket", back_populates="requester", foreign_keys="Ticket.requester_id"
@@ -112,11 +112,11 @@ class Ticket(Base):
     resolution_summary = Column(Text, nullable=True)
     waiting_reason = Column(String, nullable=True)
 
-    reported_at = Column(DateTime(timezone=True), default=utcnow)
-    allocated_at = Column(DateTime(timezone=True), nullable=True)
-    resolved_at = Column(DateTime(timezone=True), nullable=True)
-    closed_at = Column(DateTime(timezone=True), nullable=True)
-    reopened_at = Column(DateTime(timezone=True), nullable=True)
+    reported_at = Column(DateTime, default=utcnow)
+    allocated_at = Column(DateTime, nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    closed_at = Column(DateTime, nullable=True)
+    reopened_at = Column(DateTime, nullable=True)
 
     requester = relationship(
         "User", back_populates="tickets_raised", foreign_keys=[requester_id]
@@ -147,7 +147,7 @@ class TicketComment(Base):
     author_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     comment_text = Column(Text, nullable=False)
     is_internal = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     ticket = relationship("Ticket", back_populates="comments")
     author = relationship("User")
@@ -162,7 +162,7 @@ class TicketHistory(Base):
     field_changed = Column(String, nullable=False)
     old_value = Column(String, nullable=True)
     new_value = Column(String, nullable=True)
-    changed_at = Column(DateTime(timezone=True), default=utcnow)
+    changed_at = Column(DateTime, default=utcnow)
 
     ticket = relationship("Ticket", back_populates="history")
     changed_by = relationship("User")
@@ -176,7 +176,7 @@ class Attachment(Base):
     filename = Column(String, nullable=False)
     filepath = Column(String, nullable=False)
     uploaded_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    uploaded_at = Column(DateTime(timezone=True), default=utcnow)
+    uploaded_at = Column(DateTime, default=utcnow)
 
     ticket = relationship("Ticket", back_populates="attachments")
     uploaded_by = relationship("User")

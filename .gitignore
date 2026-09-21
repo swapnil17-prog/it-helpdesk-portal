@@ -15,6 +15,9 @@ frontend/dist/
 backend/*.log
 frontend/vite.log
 
+# Env
+.env
+
 # OS
 .DS_Store
 Thumbs.db

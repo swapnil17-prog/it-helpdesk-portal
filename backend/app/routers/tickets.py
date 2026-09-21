@@ -7,7 +7,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse
-from sqlalchemy import or_
+from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app import schemas
@@ -76,10 +77,12 @@ def _ensure_not_locked(ticket: Ticket):
         raise HTTPException(status_code=400, detail="Reopen the ticket before making further changes")
 
 
+MAX_TICKET_NUMBER_RETRIES = 5
+
+
 def _next_ticket_number(db: Session) -> str:
-    last = db.query(Ticket).order_by(Ticket.id.desc()).first()
-    next_id = (last.id + 1) if last else 1
-    return f"TCK-{next_id:06d}"
+    max_id = db.query(func.max(Ticket.id)).scalar() or 0
+    return f"TCK-{max_id + 1:06d}"
 
 
 @router.post("", response_model=schemas.TicketDetail)
@@ -92,19 +95,30 @@ def create_ticket(
     if not priority:
         raise HTTPException(status_code=400, detail="Invalid priority")
 
-    ticket = Ticket(
-        ticket_number=_next_ticket_number(db),
-        requester_id=current_user.id,
-        department=current_user.department,
-        issue=payload.issue.strip(),
-        description=payload.description.strip(),
-        contact_info=payload.contact_info,
-        category_id=payload.category_id,
-        priority_id=payload.priority_id,
-        status=TicketStatus.NEW.value,
-    )
-    db.add(ticket)
-    db.commit()
+    # ticket_number is derived from MAX(id), which two concurrent requests could read
+    # identically before either commits — the unique constraint then rejects the loser,
+    # who retries with a freshly-read (now-advanced) number instead of failing outright.
+    for attempt in range(MAX_TICKET_NUMBER_RETRIES):
+        ticket = Ticket(
+            ticket_number=_next_ticket_number(db),
+            requester_id=current_user.id,
+            department=current_user.department,
+            issue=payload.issue.strip(),
+            description=payload.description.strip(),
+            contact_info=payload.contact_info,
+            category_id=payload.category_id,
+            priority_id=payload.priority_id,
+            status=TicketStatus.NEW.value,
+        )
+        db.add(ticket)
+        try:
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+            if attempt == MAX_TICKET_NUMBER_RETRIES - 1:
+                raise
+
     db.refresh(ticket)
     ticket = (
         db.query(Ticket).options(*TICKET_LOAD_OPTIONS).filter(Ticket.id == ticket.id).first()

@@ -1,4 +1,5 @@
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -8,10 +9,17 @@ from fastapi.staticfiles import StaticFiles
 
 from app.database import Base, engine
 from app.routers import auth, config, dashboard, tickets, users
+from app.seed import seed
 
-Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="IT Helpdesk Ticketing Portal API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    seed()  # no-ops on its own once the users table is non-empty
+    yield
+
+
+app = FastAPI(title="IT Helpdesk Ticketing Portal API", version="1.0.0", lifespan=lifespan)
 
 default_origins = "http://localhost:5173,http://127.0.0.1:5173"
 cors_origins = os.environ.get("CORS_ORIGINS", default_origins).split(",")

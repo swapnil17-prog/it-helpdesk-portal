@@ -29,6 +29,8 @@ def list_users(
 def create_user(payload: schemas.UserCreate, db: Session = Depends(get_db)):
     if db.query(User).filter(User.employee_id == payload.employee_id).first():
         raise HTTPException(status_code=400, detail="Employee ID already exists")
+    if db.query(User).filter(User.email == payload.email).first():
+        raise HTTPException(status_code=400, detail="Email already exists")
     user = User(
         employee_id=payload.employee_id,
         name=payload.name,
@@ -55,6 +57,9 @@ def update_user(user_id: int, payload: schemas.UserUpdate, db: Session = Depends
         password = data.pop("password")
         if password:
             user.password_hash = hash_password(password)
+    if "email" in data and data["email"] != user.email:
+        if db.query(User).filter(User.email == data["email"], User.id != user_id).first():
+            raise HTTPException(status_code=400, detail="Email already exists")
     for field, value in data.items():
         setattr(user, field, value)
     db.commit()
