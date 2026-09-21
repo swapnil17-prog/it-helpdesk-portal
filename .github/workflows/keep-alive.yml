@@ -1,0 +1,29 @@
+name: Keep Render service awake
+
+# Render's free tier spins a service down after ~15 minutes with no traffic; the next
+# request then waits through a slow "cold start" while it wakes back up. Pinging the
+# health endpoint on an interval well under that threshold keeps it warm instead.
+#
+# Note: GitHub automatically disables scheduled workflows after 60 days of repository
+# inactivity (no commits) — pushing anything to the repo re-enables it.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+env:
+  APP_URL: https://it-helpdesk-portal-n6a1.onrender.com
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$APP_URL/health")
+          echo "Health check responded: $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::Health check failed with status $status"
+            exit 1
+          fi

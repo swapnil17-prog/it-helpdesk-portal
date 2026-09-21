@@ -177,6 +177,14 @@ entirely if that's a constraint.
 
 </details>
 
+### Keeping the free-tier service warm
+
+`.github/workflows/keep-alive.yml` pings `/health` every 10 minutes so the Render free-tier
+service never sits idle long enough to spin down (avoiding the ~30–60s "cold start" delay the
+next visitor would otherwise hit). It hardcodes the deployed URL — update the `APP_URL` env var in
+that file if the service is ever recreated under a different URL. GitHub disables scheduled
+workflows after 60 days without a commit to the repo; pushing anything re-enables it.
+
 ## Making it configurable later
 
 - **Categories & Priorities** — already stored in DB tables and editable from Admin → Categories /
