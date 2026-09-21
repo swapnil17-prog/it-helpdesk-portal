@@ -5,7 +5,8 @@ A demo-ready MVP of the IT Helpdesk Ticketing Portal, built from the
 full core workflow end to end: employee raises a ticket → IT queue → assign → work → resolve →
 close → daily dashboard.
 
-**Stack:** FastAPI (Python) backend, React (Vite) frontend, SQLite database.
+**Stack:** FastAPI (Python) backend, React (Vite) frontend, PostgreSQL (with a zero-config SQLite
+fallback for local dev — see `backend/app/database.py`).
 
 ## What's included (MVP scope)
 
@@ -37,23 +38,28 @@ model and Admin screen are built so these can be layered on without a redesign.
 ## Project structure
 
 ```
-backend/    FastAPI app (SQLAlchemy + SQLite), JWT auth, seed script
-frontend/   React + Vite + Tailwind CSS SPA
-Dockerfile  Multi-stage build: frontend build → baked into the backend image
+backend/            FastAPI app (SQLAlchemy + Postgres/SQLite), JWT auth, seed script
+frontend/           React + Vite + Tailwind CSS SPA
+Dockerfile          Multi-stage build: frontend build → baked into the backend image
+docker-compose.yml  Local Postgres + app stack, for testing against Postgres before deploying
+.env.example        Copy to .env to override DATABASE_URL / JWT_SECRET_KEY / etc. locally
 ```
 
 ## Running it locally
 
-### Backend
+### Backend (SQLite, zero config)
 
 ```bash
 cd backend
 python -m venv venv
 venv\Scripts\activate        # Windows
 pip install -r requirements.txt
-python -m app.seed           # creates ticketing.db with demo users, categories, priorities, sample tickets
 uvicorn app.main:app --reload --port 8000
 ```
+
+No `DATABASE_URL` set → falls back to a local `ticketing.db` file. Schema creation and demo-data
+seeding both happen automatically on startup (see the `lifespan` handler in `backend/app/main.py`)
+— no separate seed step needed. It's idempotent, so restarting never duplicates data.
 
 API docs: http://127.0.0.1:8000/docs
 
@@ -68,15 +74,25 @@ npm run dev
 App: http://localhost:5173 (Vite proxies `/api` to the backend on port 8000 — the backend serves
 all of its routes under `/api`, see `backend/app/main.py`).
 
-### Or run it as a single Docker container (mirrors production)
+### Or run the full stack against a real local Postgres (mirrors production)
+
+```bash
+docker compose up --build
+```
+
+Starts a `postgres:16` container plus the app (built from the root `Dockerfile`), wired together —
+app waits for Postgres's healthcheck before booting. Everything at http://localhost:8000. This is
+the setup to use if you want to test something Postgres-specific before deploying.
+
+### Or just the single Docker image, against whatever `DATABASE_URL` you point it at
 
 ```bash
 docker build -t it-helpdesk-portal .
-docker run -p 8000:8000 -e JWT_SECRET_KEY=some-random-value it-helpdesk-portal
+docker run -p 8000:8000 -e JWT_SECRET_KEY=some-random-value -e DATABASE_URL=... it-helpdesk-portal
 ```
 
-App + API both at http://localhost:8000 — this builds the frontend and bakes it into the backend
-image, exactly what happens in the Render deployment below.
+Omit `DATABASE_URL` and it falls back to SQLite inside the container (fine for a quick check, but
+gone when the container stops).
 
 ## Demo logins
 
@@ -106,34 +122,41 @@ for each one.
 - **The seeded demo password (`password123`) is intentionally weak.** Fine for a private demo you
   control; if you deploy this somewhere with a shareable URL, change the seeded passwords first.
 
-## Deploying to Render (Docker)
+## Deploying to Render (Docker + managed Postgres)
 
 The root `Dockerfile` is a multi-stage build: it builds the React app, then bakes the built static
-files into the same image as the FastAPI backend. One image, one Render service, no CORS and no
-cross-origin URL wiring to worry about — the frontend and API are served from the same origin.
-`backend/app/main.py` serves the built frontend for any path that isn't `/api/...`, falling back to
-`index.html` for client-side routes (e.g. a browser refresh on `/tickets/5`).
+files into the same image as the FastAPI backend. One image, one Render **Web Service**, no CORS
+and no cross-origin URL wiring to worry about — the frontend and API are served from the same
+origin. `backend/app/main.py` serves the built frontend for any path that isn't `/api/...`, falling
+back to `index.html` for client-side routes (e.g. a browser refresh on `/tickets/5`). You also need
+one Render **PostgreSQL** resource (a separate thing from the Web Service) for `DATABASE_URL` to
+point at — Render's disks are wiped on every restart/redeploy/spin-down-wakeup, so a real database
+is what makes data actually persist between those (a wake-from-sleep now just no-ops the idempotent
+seed instead of losing everything).
 
-The free tier's disk is wiped on every restart/redeploy/spin-down-wakeup, so `backend/start.sh`
-re-runs the (idempotent) seed script on every boot before starting uvicorn — demo users, roles and
-passwords are always there even though nothing else persists. Fine for a demo; if you need data to
-actually survive between visits, swap SQLite for Render's managed Postgres and move `uploads/` to
-object storage (S3-compatible) instead.
+**1. New → PostgreSQL** — any name, default region/plan. Note: Render's **free Postgres expires
+after 30 days** and is deleted — fine to start with, but upgrade it before then if this needs to
+keep running. Once created, copy the **Internal Database URL**.
 
-**Render setup — one Web Service:**
-- New → Web Service → connect this repo
+**2. New → Web Service → connect this repo:**
 - Environment / Runtime: **Docker** (Render should auto-detect the root `Dockerfile`; if asked,
   Dockerfile path is `Dockerfile`, context is the repo root)
-- Environment variables: `JWT_SECRET_KEY` (Render can auto-generate a value for this)
-- That's it — Render injects `PORT` automatically and `start.sh` already binds to it
+- Environment variables:
+  - `DATABASE_URL` = the Internal Database URL from step 1, pasted exactly as Render gives it
+    (it comes back as `postgres://...` — `backend/app/database.py` already normalizes that prefix,
+    no manual editing needed)
+  - `JWT_SECRET_KEY` (Render can auto-generate a value for this)
+- Render injects `PORT` automatically and `start.sh` already binds to it
 
-I built and ran this image locally (`docker build` + `docker run`) before writing these
-instructions, including the exact scenario that would otherwise break — a direct browser refresh on
-a ticket detail page (`/tickets/5`) returning the app shell rather than raw JSON — so this path is
-verified, not just plausible.
+I built and ran this image locally (`docker build` + `docker run`, and the full stack via `docker
+compose up` against a real Postgres container) before writing these instructions, including the
+exact scenario that would otherwise break — a direct browser refresh on a ticket detail page
+(`/tickets/5`) returning the app shell rather than raw JSON, and the dashboard's average-resolution
+calculation, which would throw on Postgres if a datetime column were misconfigured — so this path
+is verified, not just plausible.
 
 Double-check Render's current dashboard field names before you start (labels move between
-versions); the Docker runtime choice and the one env var above are the parts that actually matter.
+versions); the Docker runtime choice and the two env vars above are the parts that actually matter.
 
 <details>
 <summary>Alternative: frontend and backend as two separate Render services</summary>
@@ -142,8 +165,8 @@ If you'd rather not use Docker, the same code also supports deploying the backen
 Python Web Service and the frontend as a separate Static Site:
 
 - **Backend** — Root Directory `backend`, Build Command `pip install -r requirements.txt`, Start
-  Command `bash start.sh`, env vars `JWT_SECRET_KEY` and `CORS_ORIGINS` (set to the frontend's URL
-  once you know it).
+  Command `bash start.sh`, env vars `DATABASE_URL` (a Render Postgres Internal URL), `JWT_SECRET_KEY`,
+  and `CORS_ORIGINS` (set to the frontend's URL once you know it).
 - **Frontend** — Root Directory `frontend`, Build Command `npm install && npm run build`, Publish
   Directory `dist`, env var `VITE_API_URL` = the backend's bare URL (no `/api` suffix — the app
   appends that itself), plus a rewrite rule `/*` → `/index.html` so client-side routes don't 404 on
