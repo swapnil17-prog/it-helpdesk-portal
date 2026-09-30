@@ -90,11 +90,30 @@ def dashboard_summary(
     ]
 
     workload_counts = defaultdict(int)
+    workload_ids = {}
     for t in open_tickets_list:
-        workload_counts[t.assignee.name if t.assignee else "Unassigned"] += 1
+        name = t.assignee.name if t.assignee else "Unassigned"
+        workload_counts[name] += 1
+        workload_ids[name] = t.assignee.id if t.assignee else None
     agent_workload = [
-        {"name": name, "count": count}
+        {"id": workload_ids[name], "name": name, "count": count}
         for name, count in sorted(workload_counts.items(), key=lambda x: -x[1])
+    ]
+
+    # All-time completed counts per agent — deliberately NOT scoped to open_tickets_list
+    # (which is empty once everything's resolved/closed) or to today, so this chart still
+    # has something to show once the current backlog is fully cleared, and answers "how
+    # many tickets has each person actually finished" rather than just "how many are they
+    # currently holding."
+    completed_counts = defaultdict(int)
+    completed_ids = {}
+    for t in tickets:
+        if t.status in CLOSED_LIKE and t.assignee:
+            completed_counts[t.assignee.name] += 1
+            completed_ids[t.assignee.name] = t.assignee.id
+    agent_completed = [
+        {"id": completed_ids[name], "name": name, "count": count}
+        for name, count in sorted(completed_counts.items(), key=lambda x: -x[1])
     ]
 
     now = datetime.utcnow()
@@ -127,5 +146,6 @@ def dashboard_summary(
         department_split=department_split,
         category_split=category_split,
         agent_workload=agent_workload,
+        agent_completed=agent_completed,
         aging_buckets=aging_buckets,
     )

@@ -138,6 +138,11 @@ class TicketCreate(BaseModel):
     priority_id: int
     category_id: Optional[int] = None
     contact_info: Optional[str] = None
+    # Only honored when the caller is an agent/admin — logging a ticket on behalf of an
+    # employee (a verbal report) or for a task they're already picking up themselves.
+    # Silently ignored for employee callers, who can only ever raise a ticket as themselves.
+    requester_id: Optional[int] = None
+    assigned_to_id: Optional[int] = None
 
 
 class TicketAssign(BaseModel):
@@ -211,4 +216,5 @@ class DashboardSummary(BaseModel):
     department_split: list[dict]
     category_split: list[dict]
     agent_workload: list[dict]
+    agent_completed: list[dict]
     aging_buckets: list[dict]

@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Search } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Download, Plus, Search } from 'lucide-react'
 import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
+import RaiseTicketModal from '../components/RaiseTicketModal'
 import { StatusBadge, PriorityDot } from '../components/Badges'
 import { ageInDays, ageLabel } from '../utils/format'
+
+const AGENT_ROLES = ['agent', 'admin']
 
 function ageColorClass(reportedAt) {
   const days = ageInDays(reportedAt)
@@ -14,14 +17,26 @@ function ageColorClass(reportedAt) {
   return 'text-gray-500'
 }
 
+function todayIso() {
+  return new Date().toISOString().slice(0, 10)
+}
+
 export default function ITQueue() {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [tickets, setTickets] = useState([])
-  const [tab, setTab] = useState('all')
+  const [agents, setAgents] = useState([])
+  const [tab, setTab] = useState(searchParams.get('tab') || 'all')
+  const [assigneeFilter, setAssigneeFilter] = useState(searchParams.get('assignee') || '')
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState(null)
+  const [showRaiseModal, setShowRaiseModal] = useState(false)
+  const [showExport, setShowExport] = useState(false)
+  const [exportFrom, setExportFrom] = useState(todayIso())
+  const [exportTo, setExportTo] = useState(todayIso())
+  const [exporting, setExporting] = useState(false)
 
   function load() {
     setLoading(true)
@@ -32,6 +47,19 @@ export default function ITQueue() {
   }
 
   useEffect(load, [])
+
+  useEffect(() => {
+    api.get('/users').then((res) => setAgents(res.data.filter((u) => AGENT_ROLES.includes(u.role))))
+  }, [])
+
+  // Lets the dashboard deep-link here (e.g. a KPI card or chart bar linking to
+  // /queue?tab=unassigned or ?assignee=4) instead of just displaying a number nobody can act on.
+  useEffect(() => {
+    const nextTab = searchParams.get('tab')
+    const nextAssignee = searchParams.get('assignee')
+    if (nextTab) setTab(nextTab)
+    if (nextAssignee !== null) setAssigneeFilter(nextAssignee)
+  }, [searchParams])
 
   const isOpen = (t) => !['Resolved', 'Closed'].includes(t.status)
   const isCriticalOrHigh = (t) => t.priority.level >= 3
@@ -53,6 +81,11 @@ export default function ITQueue() {
       },
       { key: 'resolved', label: 'Resolved', count: tickets.filter((t) => t.status === 'Resolved').length },
       { key: 'closed', label: 'Closed', count: tickets.filter((t) => t.status === 'Closed').length },
+      {
+        key: 'done',
+        label: 'Done (all-time)',
+        count: tickets.filter((t) => !isOpen(t)).length,
+      },
     ],
     [tickets, user.id]
   )
@@ -67,6 +100,14 @@ export default function ITQueue() {
       list = list.filter((t) => t.status === 'Waiting for User' || t.status === 'Waiting for Vendor')
     if (tab === 'resolved') list = list.filter((t) => t.status === 'Resolved')
     if (tab === 'closed') list = list.filter((t) => t.status === 'Closed')
+    // "Done" is the Resolved+Closed union — matches the dashboard's "completed by agent"
+    // chart, which counts both together, so a drill-down click lands on a view with the
+    // same total rather than silently dropping the still-Resolved-not-yet-Closed ones.
+    if (tab === 'done') list = list.filter((t) => !isOpen(t))
+
+    if (assigneeFilter) {
+      list = list.filter((t) => String(t.assignee?.id || '') === assigneeFilter)
+    }
 
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -79,7 +120,7 @@ export default function ITQueue() {
       )
     }
     return list
-  }, [tickets, tab, search, user.id])
+  }, [tickets, tab, assigneeFilter, search, user.id])
 
   async function claim(ticketId) {
     setBusyId(ticketId)
@@ -91,6 +132,37 @@ export default function ITQueue() {
     }
   }
 
+  function updateAssigneeFilter(value) {
+    setAssigneeFilter(value)
+    const next = new URLSearchParams(searchParams)
+    if (value) next.set('assignee', value)
+    else next.delete('assignee')
+    setSearchParams(next, { replace: true })
+  }
+
+  async function handleExport() {
+    setExporting(true)
+    try {
+      const res = await api.get('/tickets/export', {
+        params: {
+          date_from: exportFrom,
+          date_to: exportTo,
+          assigned_to_id: assigneeFilter || undefined,
+        },
+        responseType: 'blob',
+      })
+      const url = window.URL.createObjectURL(res.data)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `tickets_${exportFrom}_to_${exportTo}.csv`
+      link.click()
+      window.URL.revokeObjectURL(url)
+      setShowExport(false)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const openCount = tickets.filter(isOpen).length
 
   return (
@@ -99,28 +171,71 @@ export default function ITQueue() {
         title="IT Queue"
         subtitle={`${openCount} open ticket${openCount === 1 ? '' : 's'}`}
         right={
-          <div className="relative">
-            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              className="input w-64 pl-9"
-              placeholder="Search ID, name, issue"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                className="input w-56 pl-9"
+                placeholder="Search ID, name, issue"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <button type="button" onClick={() => setShowExport((v) => !v)} className="btn btn-secondary">
+              <Download size={15} /> Export
+            </button>
+            <button type="button" onClick={() => setShowRaiseModal(true)} className="btn btn-primary">
+              <Plus size={16} /> New Ticket
+            </button>
           </div>
         }
       />
 
-      <div className="flex flex-wrap gap-2">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`pill-tab ${tab === t.key ? 'active' : ''}`}
-          >
-            {t.label} {t.count}
+      {showExport && (
+        <div className="card flex flex-wrap items-end gap-3 p-4">
+          <div>
+            <label className="field-label">From</label>
+            <input type="date" className="input" value={exportFrom} onChange={(e) => setExportFrom(e.target.value)} />
+          </div>
+          <div>
+            <label className="field-label">To</label>
+            <input type="date" className="input" value={exportTo} onChange={(e) => setExportTo(e.target.value)} />
+          </div>
+          <p className="text-xs text-gray-500">
+            {assigneeFilter
+              ? 'Scoped to the assignee currently selected below.'
+              : 'No assignee selected below — this exports the whole team.'}
+          </p>
+          <button disabled={exporting} onClick={handleExport} className="btn btn-primary ml-auto">
+            {exporting ? 'Preparing…' : 'Download CSV'}
           </button>
-        ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`pill-tab ${tab === t.key ? 'active' : ''}`}
+            >
+              {t.label} {t.count}
+            </button>
+          ))}
+        </div>
+        <select
+          className="input w-48"
+          value={assigneeFilter}
+          onChange={(e) => updateAssigneeFilter(e.target.value)}
+        >
+          <option value="">All IT staff</option>
+          {agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       {loading ? (
@@ -188,6 +303,16 @@ export default function ITQueue() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {showRaiseModal && (
+        <RaiseTicketModal
+          onClose={() => setShowRaiseModal(false)}
+          onCreated={() => {
+            setShowRaiseModal(false)
+            load()
+          }}
+        />
       )}
     </div>
   )

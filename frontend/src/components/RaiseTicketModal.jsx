@@ -4,15 +4,22 @@ import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import Avatar from './Avatar'
 
+const AGENT_ROLES = ['agent', 'admin']
+
 export default function RaiseTicketModal({ onClose, onCreated }) {
   const { user } = useAuth()
+  const isAgentLike = AGENT_ROLES.includes(user.role)
   const [categories, setCategories] = useState([])
   const [priorities, setPriorities] = useState([])
+  const [employees, setEmployees] = useState([])
+  const [agents, setAgents] = useState([])
   const [issue, setIssue] = useState('')
   const [description, setDescription] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [priorityId, setPriorityId] = useState('')
   const [location, setLocation] = useState('')
+  const [requesterId, setRequesterId] = useState('')
+  const [assigneeId, setAssigneeId] = useState('')
   const [file, setFile] = useState(null)
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState('')
@@ -25,6 +32,14 @@ export default function RaiseTicketModal({ onClose, onCreated }) {
       const medium = pris.data.find((p) => p.name === 'Medium')
       setPriorityId(String((medium || pris.data[0])?.id || ''))
     })
+    if (isAgentLike) {
+      setAssigneeId(String(user.id))
+      api.get('/users').then((res) => {
+        setEmployees(res.data.filter((u) => u.role === 'employee'))
+        setAgents(res.data.filter((u) => AGENT_ROLES.includes(u.role)))
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function handleSubmit(e) {
@@ -42,6 +57,10 @@ export default function RaiseTicketModal({ onClose, onCreated }) {
         priority_id: Number(priorityId),
         category_id: categoryId ? Number(categoryId) : null,
         contact_info: location.trim() || null,
+        ...(isAgentLike && {
+          requester_id: requesterId ? Number(requesterId) : null,
+          assigned_to_id: assigneeId ? Number(assigneeId) : null,
+        }),
       })
       if (file) {
         const form = new FormData()
@@ -70,8 +89,14 @@ export default function RaiseTicketModal({ onClose, onCreated }) {
       <div className="card w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
         <div className="mb-5 flex items-start justify-between">
           <div>
-            <h2 className="text-lg font-bold text-gray-900">Raise an IT ticket</h2>
-            <p className="text-xs text-gray-500">Tell us what's wrong and we'll route it to the IT team.</p>
+            <h2 className="text-lg font-bold text-gray-900">
+              {isAgentLike ? 'Log a ticket' : 'Raise an IT ticket'}
+            </h2>
+            <p className="text-xs text-gray-500">
+              {isAgentLike
+                ? "Something reported verbally, or a task you're already picking up — it'll be captured the same as any other ticket."
+                : "Tell us what's wrong and we'll route it to the IT team."}
+            </p>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
@@ -110,6 +135,34 @@ export default function RaiseTicketModal({ onClose, onCreated }) {
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
+
+          {isAgentLike && (
+            <div className="grid grid-cols-2 gap-3 rounded-xl bg-gray-50 p-3">
+              <div>
+                <label className="field-label">
+                  On behalf of <span className="font-normal text-gray-400">optional</span>
+                </label>
+                <select className="input" value={requesterId} onChange={(e) => setRequesterId(e.target.value)}>
+                  <option value="">Myself (self-initiated task)</option>
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.name} — {emp.department}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="field-label">Assign to</label>
+                <select className="input" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.id === user.id ? `${a.name} (me)` : a.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="field-label">Priority</label>

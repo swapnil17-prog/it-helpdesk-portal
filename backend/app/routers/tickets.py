@@ -1,3 +1,5 @@
+import csv
+import io
 import os
 import re
 import shutil
@@ -6,13 +8,13 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app import schemas
-from app.auth import get_current_user
+from app.auth import get_current_user, require_roles
 from app.database import get_db
 from app.models import (
     Attachment,
@@ -95,20 +97,43 @@ def create_ticket(
     if not priority:
         raise HTTPException(status_code=400, detail="Invalid priority")
 
+    # Employees can only ever raise a ticket as themselves. Agents/admins may log one on
+    # behalf of an employee (something reported verbally) or leave requester blank to log
+    # a self-initiated task — and since they're the one logging it, they're assumed to
+    # already be handling it, so it's auto-assigned to them (or whoever they name) instead
+    # of landing unassigned in the queue.
+    requester = current_user
+    assignee = None
+    if current_user.role in AGENT_ROLES:
+        if payload.requester_id is not None:
+            requester = db.query(User).filter(User.id == payload.requester_id).first()
+            if not requester:
+                raise HTTPException(status_code=400, detail="Invalid requester")
+        if payload.assigned_to_id is not None:
+            assignee = db.query(User).filter(User.id == payload.assigned_to_id).first()
+            if not assignee or assignee.role not in AGENT_ROLES:
+                raise HTTPException(status_code=400, detail="Assignee must be an IT agent or admin")
+        else:
+            assignee = current_user
+
+    now = datetime.utcnow()
+
     # ticket_number is derived from MAX(id), which two concurrent requests could read
     # identically before either commits — the unique constraint then rejects the loser,
     # who retries with a freshly-read (now-advanced) number instead of failing outright.
     for attempt in range(MAX_TICKET_NUMBER_RETRIES):
         ticket = Ticket(
             ticket_number=_next_ticket_number(db),
-            requester_id=current_user.id,
-            department=current_user.department,
+            requester_id=requester.id,
+            department=requester.department,
             issue=payload.issue.strip(),
             description=payload.description.strip(),
             contact_info=payload.contact_info,
             category_id=payload.category_id,
             priority_id=payload.priority_id,
-            status=TicketStatus.NEW.value,
+            status=TicketStatus.ASSIGNED.value if assignee else TicketStatus.NEW.value,
+            assigned_to_id=assignee.id if assignee else None,
+            allocated_at=now if assignee else None,
         )
         db.add(ticket)
         try:
@@ -118,6 +143,10 @@ def create_ticket(
             db.rollback()
             if attempt == MAX_TICKET_NUMBER_RETRIES - 1:
                 raise
+
+    if assignee:
+        _log(db, ticket, current_user, "Assignee", "Unassigned", assignee.name)
+        db.commit()
 
     db.refresh(ticket)
     ticket = (
@@ -177,6 +206,74 @@ def list_tickets(
         query = query.filter(Ticket.reported_at <= datetime.combine(date_to, datetime.max.time()))
 
     return query.order_by(Ticket.reported_at.desc()).all()
+
+
+def _aging_hours(ticket: Ticket) -> Optional[float]:
+    end = ticket.closed_at or ticket.resolved_at
+    if end is None:
+        return None
+    return round((end - ticket.reported_at).total_seconds() / 3600.0, 1)
+
+
+@router.get("/export", dependencies=[Depends(require_roles("agent", "admin", "management"))])
+def export_tickets(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    assigned_to_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    # Defaults to "today" so an IT user can grab a quick day-wise report with no params;
+    # widen date_from/date_to for a month-wise one. Pass assigned_to_id to scope it to a
+    # single IT user's own tickets instead of the whole team's.
+    today = datetime.utcnow().date()
+    date_from = date_from or today
+    date_to = date_to or today
+
+    query = (
+        db.query(Ticket)
+        .options(*TICKET_LOAD_OPTIONS)
+        .filter(Ticket.reported_at >= datetime.combine(date_from, datetime.min.time()))
+        .filter(Ticket.reported_at <= datetime.combine(date_to, datetime.max.time()))
+    )
+    if assigned_to_id:
+        query = query.filter(Ticket.assigned_to_id == assigned_to_id)
+    tickets = query.order_by(Ticket.reported_at.asc()).all()
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "Ticket ID", "Issue", "Requester", "Department", "Category", "Priority", "Status",
+            "Assigned To", "Reported At", "Allocated At", "Resolved At", "Closed At",
+            "Resolution / Action Taken", "Aging (hours)",
+        ]
+    )
+    for t in tickets:
+        writer.writerow(
+            [
+                t.ticket_number,
+                t.issue,
+                t.requester.name,
+                t.department,
+                t.category.name if t.category else "",
+                t.priority.name,
+                t.status,
+                t.assignee.name if t.assignee else "",
+                t.reported_at.strftime("%Y-%m-%d %H:%M") if t.reported_at else "",
+                t.allocated_at.strftime("%Y-%m-%d %H:%M") if t.allocated_at else "",
+                t.resolved_at.strftime("%Y-%m-%d %H:%M") if t.resolved_at else "",
+                t.closed_at.strftime("%Y-%m-%d %H:%M") if t.closed_at else "",
+                t.resolution_summary or "",
+                _aging_hours(t) if _aging_hours(t) is not None else "",
+            ]
+        )
+
+    filename = f"tickets_{date_from.isoformat()}_to_{date_to.isoformat()}.csv"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{ticket_id}", response_model=schemas.TicketDetail)

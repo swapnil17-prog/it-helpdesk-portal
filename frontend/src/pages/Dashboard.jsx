@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Calendar } from 'lucide-react'
 import api from '../api/client'
 import PageHeader from '../components/PageHeader'
@@ -42,6 +43,7 @@ function Delta({ current, previous }) {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [data, setData] = useState(null)
   const [yesterday, setYesterday] = useState(null)
@@ -92,6 +94,7 @@ export default function Dashboard() {
     {
       label: 'Open tickets',
       value: data.open_tickets,
+      linkTo: '/queue?tab=all',
       context: (
         <span className="text-gray-400">
           {data.avg_resolution_hours != null ? `Avg fix ${data.avg_resolution_hours}h` : 'No resolutions yet'}
@@ -102,6 +105,7 @@ export default function Dashboard() {
       label: 'Unallocated',
       value: data.unallocated_tickets,
       warn: data.unallocated_tickets > 0,
+      linkTo: '/queue?tab=unassigned',
       context:
         data.unallocated_tickets > 0 ? (
           <span className="font-medium text-rose-600">Needs an owner</span>
@@ -140,15 +144,22 @@ export default function Dashboard() {
       />
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {kpis.map((k) => (
-          <div key={k.label} className="card p-4">
-            <p className="text-xs font-medium text-gray-500">{k.label}</p>
-            <p className={`mt-1 text-2xl font-bold ${k.warn ? 'text-rose-600' : 'text-gray-900'}`}>
-              {k.value}
-            </p>
-            <p className="mt-1 text-xs">{k.context}</p>
-          </div>
-        ))}
+        {kpis.map((k) => {
+          const Tag = k.linkTo ? 'button' : 'div'
+          return (
+            <Tag
+              key={k.label}
+              onClick={k.linkTo ? () => navigate(k.linkTo) : undefined}
+              className={`card p-4 text-left ${k.linkTo ? 'transition hover:border-brand-300 hover:shadow-sm' : ''}`}
+            >
+              <p className="text-xs font-medium text-gray-500">{k.label}</p>
+              <p className={`mt-1 text-2xl font-bold ${k.warn ? 'text-rose-600' : 'text-gray-900'}`}>
+                {k.value}
+              </p>
+              <p className="mt-1 text-xs">{k.context}</p>
+            </Tag>
+          )
+        })}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -210,7 +221,7 @@ export default function Dashboard() {
           )}
         </ChartCard>
 
-        <ChartCard title="Agent workload">
+        <ChartCard title="Agent workload" subtitle="Open tickets currently held — click a bar to view them">
           {data.agent_workload.length === 0 ? (
             <EmptyChart />
           ) : (
@@ -219,7 +230,44 @@ export default function Dashboard() {
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
                 <Tooltip cursor={{ fill: '#f3f4f6' }} />
-                <Bar dataKey="count" fill="#2563eb" radius={[0, 6, 6, 0]} barSize={16} label={{ position: 'right', fontSize: 12 }} />
+                <Bar
+                  dataKey="count"
+                  fill="#2563eb"
+                  radius={[0, 6, 6, 0]}
+                  barSize={16}
+                  label={{ position: 'right', fontSize: 12 }}
+                  style={{ cursor: 'pointer' }}
+                  onClick={(entry) => {
+                    const id = entry?.id ?? entry?.payload?.id
+                    navigate(id ? `/queue?tab=all&assignee=${id}` : '/queue?tab=unassigned')
+                  }}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
+
+        <ChartCard title="Tickets completed by agent" subtitle="All-time resolved + closed — click a bar to view them">
+          {data.agent_completed.length === 0 ? (
+            <EmptyChart />
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={data.agent_completed} layout="vertical" margin={{ left: 8 }}>
+                <XAxis type="number" hide />
+                <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
+                <Tooltip cursor={{ fill: '#f3f4f6' }} />
+                <Bar
+                  dataKey="count"
+                  fill="#059669"
+                  radius={[0, 6, 6, 0]}
+                  barSize={16}
+                  label={{ position: 'right', fontSize: 12 }}
+                  style={{ cursor: 'pointer' }}
+                  onClick={(entry) => {
+                    const id = entry?.id ?? entry?.payload?.id
+                    if (id) navigate(`/queue?tab=done&assignee=${id}`)
+                  }}
+                />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -256,10 +304,12 @@ export default function Dashboard() {
   )
 }
 
-function ChartCard({ title, children }) {
+function ChartCard({ title, subtitle, children }) {
   return (
     <div className="card p-5">
-      <h3 className="mb-3 text-sm font-bold text-gray-800">{title}</h3>
+      <h3 className="text-sm font-bold text-gray-800">{title}</h3>
+      {subtitle && <p className="mb-3 mt-0.5 text-xs text-gray-400">{subtitle}</p>}
+      {!subtitle && <div className="mb-3" />}
       {children}
     </div>
   )
